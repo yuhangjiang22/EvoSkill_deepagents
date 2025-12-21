@@ -33,9 +33,22 @@ class ProgramManager:
         Initialize ProgramManager.
 
         Args:
-            cwd: Working directory for git operations. Defaults to current directory.
+            cwd: Working directory for git operations. Defaults to git repo root.
         """
-        self.cwd = Path(cwd) if cwd else Path.cwd()
+        if cwd:
+            self.cwd = Path(cwd)
+        else:
+            self.cwd = self._find_repo_root()
+
+    @staticmethod
+    def _find_repo_root() -> Path:
+        """Find the git repository root by looking for .git directory."""
+        current = Path.cwd()
+        for parent in [current, *current.parents]:
+            if (parent / ".git").exists():
+                return parent
+        # Fallback to cwd if no .git found
+        return current
 
     def create_program(
         self,

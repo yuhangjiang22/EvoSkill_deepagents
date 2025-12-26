@@ -52,6 +52,14 @@ class ProgramConfig(BaseModel):
         """Return a copy with current timestamp in metadata."""
         return self.with_metadata(created_at=datetime.now().isoformat())
 
+    def with_score(self, score: float) -> "ProgramConfig":
+        """Return a copy with score stored in metadata."""
+        return self.with_metadata(score=score)
+
+    def get_score(self) -> float | None:
+        """Get the score from metadata, or None if not set."""
+        return self.metadata.get("score")
+
     def mutate(
         self,
         name: str,

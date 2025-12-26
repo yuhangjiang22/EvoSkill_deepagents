@@ -236,6 +236,92 @@ class ProgramManager:
             if t.startswith(self.FRONTIER_PREFIX)
         ]
 
+    def get_frontier_with_scores(self) -> list[tuple[str, float]]:
+        """
+        Get frontier programs with their scores, sorted by score descending.
+
+        Returns:
+            List of (program_name, score) tuples, highest score first.
+            Programs without scores are excluded.
+        """
+        frontier = self.get_frontier()
+        scored: list[tuple[str, float]] = []
+        for name in frontier:
+            try:
+                config = self._read_config_from_branch(f"{self.BRANCH_PREFIX}{name}")
+                score = config.get_score()
+                if score is not None:
+                    scored.append((name, score))
+            except Exception:
+                continue
+        return sorted(scored, key=lambda x: x[1], reverse=True)
+
+    def get_best_from_frontier(self) -> str | None:
+        """
+        Get the program with highest score from the frontier.
+
+        Returns:
+            Program name with highest score, or None if frontier is empty.
+        """
+        scored = self.get_frontier_with_scores()
+        if scored:
+            return scored[0][0]
+        return None
+
+    def update_frontier(
+        self, name: str, score: float, max_size: int = 5
+    ) -> bool:
+        """
+        Add program to frontier if it qualifies, pruning worst if over max_size.
+
+        A program qualifies if:
+        - Frontier has fewer than max_size members, OR
+        - Score is higher than the lowest score in frontier
+
+        Args:
+            name: Program name to potentially add
+            score: Score for this program
+            max_size: Maximum frontier size
+
+        Returns:
+            True if program was added to frontier, False otherwise
+        """
+        # First, update the program's config with the score
+        current_branch = self._git_current_branch()
+        target_branch = f"{self.BRANCH_PREFIX}{name}"
+
+        # Switch to target branch to update config
+        if current_branch != target_branch:
+            self._git_checkout(target_branch)
+
+        config = self._read_config()
+        updated_config = config.with_score(score)
+        self._write_config(updated_config)
+        self._git_add(self.PROGRAM_FILE)
+        self._git_commit(f"Update score: {score:.4f}")
+
+        # Switch back
+        if current_branch != target_branch:
+            self._git_checkout(current_branch)
+
+        # Now check frontier membership
+        scored = self.get_frontier_with_scores()
+
+        # If frontier has room, add unconditionally
+        if len(scored) < max_size:
+            self.mark_frontier(name)
+            return True
+
+        # Otherwise, check if we beat the worst
+        worst_name, worst_score = scored[-1]
+        if score > worst_score:
+            # Remove worst, add new
+            self.unmark_frontier(worst_name)
+            self.mark_frontier(name)
+            return True
+
+        return False
+
     def commit(self, message: str | None = None) -> bool:
         """
         Commit any changes in the repo.

@@ -1,10 +1,13 @@
 import asyncio
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from tqdm.asyncio import tqdm_asyncio
 
 from src.agent_profiles.base import Agent, AgentTrace
+
+if TYPE_CHECKING:
+    from src.cache import RunCache
 
 T = TypeVar("T")
 
@@ -21,6 +24,8 @@ async def evaluate_agent_parallel(
     agent: Agent[T],
     items: list[tuple[str, str]],
     max_concurrent: int = 2,
+    *,
+    cache: "RunCache | None" = None,
 ) -> list[EvalResult[T]]:
     """
     Run agent on multiple questions in parallel.
@@ -28,7 +33,8 @@ async def evaluate_agent_parallel(
     Args:
         agent: The agent to evaluate
         items: List of (question, ground_truth) tuples
-        max_concurrent: Max concurrent agent runs (default 5)
+        max_concurrent: Max concurrent agent runs (default 2)
+        cache: Optional RunCache for caching results (keys on git tree hash)
 
     Returns:
         List of EvalResult containing question, ground_truth, and trace
@@ -38,7 +44,18 @@ async def evaluate_agent_parallel(
     async def run_one(question: str, ground_truth: str) -> EvalResult[T]:
         async with semaphore:
             try:
-                trace = await agent.run(question)
+                # Check cache first
+                trace = None
+                if cache is not None:
+                    trace = cache.get(question, agent.response_model)
+
+                # Cache miss - run agent
+                if trace is None:
+                    trace = await agent.run(question)
+                    # Store in cache
+                    if cache is not None:
+                        cache.set(question, trace)
+
             except Exception as e:
                 print(f"Failed on question: {question[:50]}... Error: {e}")
                 trace = None

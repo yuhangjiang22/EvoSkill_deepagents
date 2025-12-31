@@ -5,7 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
-transformed/
+treasury_bulletins_transformed/
 
 # Claude Code config (ignore most, but track program state)
 .claude/*
@@ -17,3 +17,6 @@ results/
 .venv
 .env
 .DS_Store
+
+# Cache
+.cache/

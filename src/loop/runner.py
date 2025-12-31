@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 from src.agent_profiles.base import Agent, AgentTrace
+from src.cache import RunCache, CacheConfig
 
 
 def _log(phase: str, message: str = "", indent: int = 0) -> None:
@@ -108,12 +109,28 @@ class SelfImprovingLoop:
             self._project_root / "src" / "agent_profiles" / "base_agent" / "prompt.txt"
         )
 
+        # Initialize cache
+        if config.cache_enabled:
+            cache_config = CacheConfig(
+                cache_dir=config.cache_dir,
+                enabled=True,
+                store_messages=config.cache_store_messages,
+                cwd=self._project_root,
+            )
+            self.cache: RunCache | None = RunCache(cache_config)
+        else:
+            self.cache = None
+
     async def run(self) -> LoopResult:
         """Run the full self-improving loop.
 
         Returns:
             LoopResult with frontier, best program, and iteration count.
         """
+        # 0. Reset feedback history if configured
+        if self.config.reset_feedback and self._feedback_path.exists():
+            self._feedback_path.unlink()
+
         # 1. Create and evaluate base program if needed
         await self._ensure_base_program()
 
@@ -237,7 +254,7 @@ class SelfImprovingLoop:
             Accuracy score (0.0 to 1.0).
         """
         results = await evaluate_agent_parallel(
-            self.agents.base, data, max_concurrent=self.config.concurrency
+            self.agents.base, data, max_concurrent=self.config.concurrency, cache=self.cache
         )
 
         score = 0.0

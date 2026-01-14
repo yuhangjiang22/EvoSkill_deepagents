@@ -39,6 +39,13 @@ async def main():
         default="all",
         help="Filter by difficulty",
     )
+    parser.add_argument(
+        "--num-samples",
+        "-n",
+        type=int,
+        default=None,
+        help="Limit to first N samples (default: all)",
+    )
     args = parser.parse_args()
 
     # Load dataset
@@ -50,6 +57,10 @@ async def main():
     # Filter by difficulty if requested
     if args.difficulty != "all":
         data = data[data["difficulty"] == args.difficulty]
+
+    # Limit to num_samples if specified
+    if args.num_samples is not None:
+        data = data.head(args.num_samples)
 
     print(f"Dataset: {len(data)} samples ({args.difficulty})")
 

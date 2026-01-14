@@ -5,7 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
-treasury_bulletins_transformed/
+treasury_bulletins_parsed/
 
 # Claude Code config (ignore most, but track program state)
 .claude/*

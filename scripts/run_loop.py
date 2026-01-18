@@ -26,6 +26,17 @@ from src.schemas import (
 )
 
 
+def interleave_dataframes(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
+    """Interleave rows from two dataframes (easy, hard, easy, hard, ...)"""
+    result = []
+    for i in range(max(len(df1), len(df2))):
+        if i < len(df1):
+            result.append(df1.iloc[i])
+        if i < len(df2):
+            result.append(df2.iloc[i])
+    return pd.DataFrame(result)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run self-improving agent loop")
     parser.add_argument(
@@ -75,17 +86,101 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Don't reset feedback history on start",
     )
+    # Training composition
+    parser.add_argument(
+        "--train-easy-count",
+        type=int,
+        default=None,
+        help="Number of easy questions for training",
+    )
+    parser.add_argument(
+        "--train-hard-count",
+        type=int,
+        default=None,
+        help="Number of hard questions for training",
+    )
+    parser.add_argument(
+        "--train-easy-ratio",
+        type=float,
+        default=0.5,
+        help="Easy ratio if counts not specified (default: 0.5)",
+    )
+    parser.add_argument(
+        "--train-total",
+        type=int,
+        default=20,
+        help="Total training samples if using ratio (default: 20)",
+    )
+    # Training order (curriculum)
+    parser.add_argument(
+        "--curriculum-order",
+        type=str,
+        choices=["easy_first", "hard_first", "mixed", "none"],
+        default="easy_first",
+        help="Curriculum order: easy_first, hard_first, mixed, or none (default: easy_first)",
+    )
+    # Validation composition
+    parser.add_argument(
+        "--val-easy-ratio",
+        type=float,
+        default=0.5,
+        help="Validation easy/hard balance (default: 0.5)",
+    )
+    parser.add_argument(
+        "--val-count",
+        type=int,
+        default=5,
+        help="Total validation samples (default: 5)",
+    )
     return parser.parse_args()
 
 
 async def main(args: argparse.Namespace):
     data = pd.read_csv('.dataset/train_set.csv')
 
-    train = data.sample(20, random_state=42)
-    val = data.drop(train.index).sample(5, random_state=77)
+    # Split by difficulty
+    easy_pool = data[data['difficulty'] == 'easy'].sample(frac=1, random_state=42)
+    hard_pool = data[data['difficulty'] == 'hard'].sample(frac=1, random_state=42)
+
+    # Determine training counts
+    if args.train_easy_count is not None and args.train_hard_count is not None:
+        # Use explicit counts
+        n_train_easy = args.train_easy_count
+        n_train_hard = args.train_hard_count
+    else:
+        # Use ratio
+        n_train_easy = int(args.train_total * args.train_easy_ratio)
+        n_train_hard = args.train_total - n_train_easy
+
+    # Sample training data
+    train_easy = easy_pool.head(min(n_train_easy, len(easy_pool)))
+    train_hard = hard_pool.head(min(n_train_hard, len(hard_pool)))
+
+    # Order based on curriculum
+    if args.curriculum_order == "easy_first":
+        train = pd.concat([train_easy, train_hard])
+    elif args.curriculum_order == "hard_first":
+        train = pd.concat([train_hard, train_easy])
+    elif args.curriculum_order == "mixed":
+        train = interleave_dataframes(train_easy, train_hard)
+    else:  # "none" - shuffle
+        train = pd.concat([train_easy, train_hard]).sample(frac=1, random_state=42)
+
+    # Build balanced validation set (from remaining data)
+    val_easy_pool = easy_pool.drop(train_easy.index, errors='ignore')
+    val_hard_pool = hard_pool.drop(train_hard.index, errors='ignore')
+    n_val_easy = int(args.val_count * args.val_easy_ratio)
+    n_val_hard = args.val_count - n_val_easy
+    val = pd.concat([
+        val_easy_pool.head(min(n_val_easy, len(val_easy_pool))),
+        val_hard_pool.head(min(n_val_hard, len(val_hard_pool)))
+    ]).sample(frac=1, random_state=77)  # Shuffle validation
 
     train_data = [(row.question, row.ground_truth) for _, row in train.iterrows()]
     val_data = [(row.question, row.ground_truth) for _, row in val.iterrows()]
+
+    print(f"Training: {len(train_easy)} easy, {len(train_hard)} hard ({args.curriculum_order} order)")
+    print(f"Validation: {n_val_easy} easy, {n_val_hard} hard")
 
     agents = LoopAgents(
         base=Agent(base_agent_options, AgentResponse),

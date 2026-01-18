@@ -1,6 +1,6 @@
-name: base
-parent: null
-generation: 0
+name: iter-3
+parent: program/base
+generation: 1
 system_prompt:
   type: preset
   preset: claude_code
@@ -82,5 +82,4 @@ output_format:
     title: AgentResponse
     type: object
 metadata:
-  created_at: '2026-01-18T13:39:20.904911'
-  score: 0.65
+  created_at: '2026-01-18T15:11:03.283476'

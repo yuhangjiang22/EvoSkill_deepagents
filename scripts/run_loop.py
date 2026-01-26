@@ -26,15 +26,39 @@ from src.schemas import (
 )
 
 
-def interleave_dataframes(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
-    """Interleave rows from two dataframes (easy, hard, easy, hard, ...)"""
-    result = []
-    for i in range(max(len(df1), len(df2))):
-        if i < len(df1):
-            result.append(df1.iloc[i])
-        if i < len(df2):
-            result.append(df2.iloc[i])
-    return pd.DataFrame(result)
+def stratified_split(
+    data: pd.DataFrame, val_ratio: float = 0.12
+) -> tuple[dict[str, list[tuple[str, str]]], list[tuple[str, str, str]]]:
+    """Split data ensuring each category has at least 1 in validation.
+
+    Args:
+        data: DataFrame with 'question', 'ground_truth', 'category' columns.
+        val_ratio: Fraction of each category to use for validation.
+
+    Returns:
+        train_pools: Dict mapping category -> list of (question, answer) tuples.
+        val_data: List of (question, answer, category) tuples for validation.
+    """
+    # Drop rows with missing categories
+    data = data.dropna(subset=['category'])
+    categories = data['category'].unique()
+    train_pools: dict[str, list[tuple[str, str]]] = {}
+    val_data: list[tuple[str, str, str]] = []
+
+    for cat in categories:
+        cat_data = data[data['category'] == cat].sample(frac=1, random_state=42)
+        n_val = max(1, int(len(cat_data) * val_ratio))
+
+        val_data.extend([
+            (row.question, row.ground_truth, cat)
+            for _, row in cat_data.head(n_val).iterrows()
+        ])
+        train_pools[cat] = [
+            (row.question, row.ground_truth)
+            for _, row in cat_data.tail(len(cat_data) - n_val).iterrows()
+        ]
+
+    return train_pools, val_data
 
 
 def parse_args() -> argparse.Namespace:
@@ -92,107 +116,42 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Continue from existing frontier/branch instead of starting fresh",
     )
+    # Dataset and stratified sampling
     parser.add_argument(
-        "--sample-seed",
-        type=int,
-        default=None,
-        help="Seed for random sample selection (default: None = sequential)",
-    )
-    # Training composition
-    parser.add_argument(
-        "--train-easy-count",
-        type=int,
-        default=None,
-        help="Number of easy questions for training",
-    )
-    parser.add_argument(
-        "--train-hard-count",
-        type=int,
-        default=None,
-        help="Number of hard questions for training",
-    )
-    parser.add_argument(
-        "--train-easy-ratio",
-        type=float,
-        default=0.5,
-        help="Easy ratio if counts not specified (default: 0.5)",
-    )
-    parser.add_argument(
-        "--train-total",
-        type=int,
-        default=20,
-        help="Total training samples if using ratio (default: 20)",
-    )
-    # Training order (curriculum)
-    parser.add_argument(
-        "--curriculum-order",
+        "--dataset",
         type=str,
-        choices=["easy_first", "hard_first", "mixed", "none"],
-        default="easy_first",
-        help="Curriculum order: easy_first, hard_first, mixed, or none (default: easy_first)",
+        default=".dataset/new_runs_evolved/train_set.csv",
+        help="Path to dataset CSV with category column (default: .dataset/new_runs_evolved/train_set.csv)",
     )
-    # Validation composition
     parser.add_argument(
-        "--val-easy-ratio",
+        "--val-ratio",
         type=float,
-        default=0.5,
-        help="Validation easy/hard balance (default: 0.5)",
+        default=0.12,
+        help="Fraction of each category for validation (default: 0.12)",
     )
     parser.add_argument(
         "--val-count",
         type=int,
-        default=5,
-        help="Total validation samples (default: 5)",
+        default=None,
+        help="Override total validation count (optional, overrides val-ratio)",
     )
     return parser.parse_args()
 
 
 async def main(args: argparse.Namespace):
-    data = pd.read_csv('.dataset/train_set.csv')
+    data = pd.read_csv(args.dataset)
 
-    # Split by difficulty
-    easy_pool = data[data['difficulty'] == 'easy'].sample(frac=1, random_state=42)
-    hard_pool = data[data['difficulty'] == 'hard'].sample(frac=1, random_state=42)
+    # Stratified split by category
+    train_pools, val_data = stratified_split(data, val_ratio=args.val_ratio)
 
-    # Determine training counts
-    if args.train_easy_count is not None and args.train_hard_count is not None:
-        # Use explicit counts
-        n_train_easy = args.train_easy_count
-        n_train_hard = args.train_hard_count
-    else:
-        # Use ratio
-        n_train_easy = int(args.train_total * args.train_easy_ratio)
-        n_train_hard = args.train_total - n_train_easy
-
-    # Sample training data
-    train_easy = easy_pool.head(min(n_train_easy, len(easy_pool)))
-    train_hard = hard_pool.head(min(n_train_hard, len(hard_pool)))
-
-    # Order based on curriculum
-    if args.curriculum_order == "easy_first":
-        train = pd.concat([train_easy, train_hard])
-    elif args.curriculum_order == "hard_first":
-        train = pd.concat([train_hard, train_easy])
-    elif args.curriculum_order == "mixed":
-        train = interleave_dataframes(train_easy, train_hard)
-    else:  # "none" - shuffle
-        train = pd.concat([train_easy, train_hard]).sample(frac=1, random_state=42)
-
-    # Build balanced validation set (from remaining data)
-    val_easy_pool = easy_pool.drop(train_easy.index, errors='ignore')
-    val_hard_pool = hard_pool.drop(train_hard.index, errors='ignore')
-    n_val_easy = int(args.val_count * args.val_easy_ratio)
-    n_val_hard = args.val_count - n_val_easy
-    val = pd.concat([
-        val_easy_pool.head(min(n_val_easy, len(val_easy_pool))),
-        val_hard_pool.head(min(n_val_hard, len(val_hard_pool)))
-    ]).sample(frac=1, random_state=77)  # Shuffle validation
-
-    train_data = [(row.question, row.ground_truth) for _, row in train.iterrows()]
-    val_data = [(row.question, row.ground_truth) for _, row in val.iterrows()]
-
-    print(f"Training: {len(train_easy)} easy, {len(train_hard)} hard ({args.curriculum_order} order)")
-    print(f"Validation: {n_val_easy} easy, {n_val_hard} hard")
+    # Print category distribution
+    categories = list(train_pools.keys())
+    total_train = sum(len(pool) for pool in train_pools.values())
+    print(f"Dataset: {args.dataset}")
+    print(f"Categories ({len(categories)}): {', '.join(categories)}")
+    print(f"Training pools: {', '.join(f'{cat}: {len(pool)}' for cat, pool in train_pools.items())}")
+    print(f"Total training samples: {total_train}")
+    print(f"Validation samples: {len(val_data)} ({args.val_ratio:.0%} per category, min 1 each)")
 
     agents = LoopAgents(
         base=Agent(base_agent_options, AgentResponse),
@@ -210,14 +169,14 @@ async def main(args: argparse.Namespace):
         concurrency=args.concurrency,
         evolution_mode=args.mode,
         failure_sample_count=args.failure_samples,
-        sample_seed=args.sample_seed,
+        categories_per_batch=args.failure_samples,  # Sample from N different categories
         cache_enabled=not args.no_cache,
         reset_feedback=not args.no_reset_feedback,
         continue_mode=args.continue_loop,
     )
 
     print(f"Running loop with evolution_mode={args.mode}")
-    loop = SelfImprovingLoop(config, agents, manager, train_data, val_data)
+    loop = SelfImprovingLoop(config, agents, manager, train_pools, val_data)
     result = await loop.run()
 
     print(f"Best: {result.best_program} ({result.best_score:.2%})")

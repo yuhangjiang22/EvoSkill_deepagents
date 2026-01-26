@@ -49,8 +49,11 @@ async def main():
     args = parser.parse_args()
 
     # Load dataset
+    # dataset_path = Path(
+    #     "~/mnt/shared-resources-sentient-research/salah_resources/datasets/officeqa/"
+    # ).expanduser()
     dataset_path = Path(
-        "~/mnt/shared-resources-sentient-research/salah_resources/datasets/officeqa/"
+        "~/officeqa/"
     ).expanduser()
     data = pd.read_csv(dataset_path / "officeqa.csv")
 

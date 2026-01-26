@@ -38,8 +38,9 @@ class LoopConfig:
     # Helps identify patterns rather than overfitting to single failures
     failure_sample_count: int = 3
 
-    # Sample selection seed: None = sequential sampling, int = random with seed
-    sample_seed: int | None = None
+    # Category-aware sampling: number of categories to sample per batch
+    # (capped by actual number of categories and failure_sample_count)
+    categories_per_batch: int = 3
 
     # Feedback configuration
     reset_feedback: bool = True

@@ -1,7 +1,6 @@
 """Self-improving agent loop runner."""
 
 import asyncio
-import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -99,8 +98,8 @@ class SelfImprovingLoop:
         config: LoopConfig,
         agents: LoopAgents,
         manager: ProgramManager,
-        train_data: list[tuple[str, str]],
-        val_data: list[tuple[str, str]],
+        train_pools: dict[str, list[tuple[str, str]]],
+        val_data: list[tuple[str, str, str]],
     ):
         """Initialize the self-improving loop.
 
@@ -108,14 +107,18 @@ class SelfImprovingLoop:
             config: Loop configuration parameters.
             agents: Container with the 4 agents (base, proposer, skill_generator, prompt_generator).
             manager: ProgramManager for git-based versioning.
-            train_data: Training data as list of (question, answer) tuples.
-            val_data: Validation data as list of (question, answer) tuples.
+            train_pools: Dict mapping category -> list of (question, answer) tuples.
+            val_data: Validation data as list of (question, answer, category) tuples.
         """
         self.config = config
         self.agents = agents
         self.manager = manager
-        self.train_data = train_data
+        self.train_pools = train_pools
         self.val_data = val_data
+
+        # Round-robin sampling state
+        self._category_offset = 0  # Which category to start with next iteration
+        self._per_cat_offset: dict[str, int] = {cat: 0 for cat in train_pools.keys()}
 
         # Paths
         self._project_root = Path(get_project_root())
@@ -156,11 +159,8 @@ class SelfImprovingLoop:
             self._iteration_offset = self._get_highest_iteration()
             _log("CONTINUE", f"Resuming from iteration {self._iteration_offset}")
 
-        # Initialize random generator for sample selection if seed provided
-        if self.config.sample_seed is not None:
-            sample_rng = random.Random(self.config.sample_seed)
-        else:
-            sample_rng = None
+        # Get sorted list of categories for deterministic round-robin
+        categories = sorted(self.train_pools.keys())
 
         # 1. Create and evaluate base program if needed (skip in continue mode with existing frontier)
         if self.config.continue_mode and self.manager.get_frontier():
@@ -175,7 +175,7 @@ class SelfImprovingLoop:
         # 2. Main loop
         no_improvement_count = 0
         iteration_count = 0
-        sample_offset = 0  # Track which samples we've used (for sequential mode)
+        n_cats = len(categories)
 
         for i in range(self.config.max_iterations):
             iteration_count = i + 1
@@ -185,29 +185,33 @@ class SelfImprovingLoop:
             self.manager.switch_to(parent)
             _log(f"ITER {iteration_count}/{self.config.max_iterations}", f"Parent: {parent}")
 
-            # Test multiple samples in parallel and collect failures
-            samples_to_test = min(self.config.failure_sample_count, len(self.train_data))
-            if sample_rng is not None:
-                # Random sampling with seed
-                test_samples = sample_rng.sample(self.train_data, samples_to_test)
-            else:
-                # Sequential sampling
-                test_samples = [
-                    self.train_data[(sample_offset + j) % len(self.train_data)]
-                    for j in range(samples_to_test)
-                ]
-                sample_offset += samples_to_test
+            # Round-robin sampling: pick 1 from each of N categories (cycling)
+            samples_per_iter = min(self.config.failure_sample_count, n_cats)
 
-            _log("", f"  Testing {samples_to_test} samples in parallel...")
+            test_samples: list[tuple[str, str, str]] = []
+            sampled_cats: list[str] = []
+            for j in range(samples_per_iter):
+                cat_idx = (self._category_offset + j) % n_cats
+                cat = categories[cat_idx]
+                pool = self.train_pools[cat]
+                sample_idx = self._per_cat_offset[cat] % len(pool)
+                question, answer = pool[sample_idx]
+                test_samples.append((question, answer, cat))
+                sampled_cats.append(cat)
+                self._per_cat_offset[cat] += 1
+
+            self._category_offset += samples_per_iter
+
+            _log("", f"  Testing {samples_per_iter} samples from categories: {', '.join(sampled_cats)}...")
 
             # Run all samples concurrently
             traces = await asyncio.gather(*[
-                self.agents.base.run(question) for question, _ in test_samples
+                self.agents.base.run(question) for question, _, _ in test_samples
             ])
 
             # Collect failures
-            failures: list[tuple[AgentTrace, str, str]] = []
-            for trace, (question, answer) in zip(traces, test_samples):
+            failures: list[tuple[AgentTrace, str, str, str]] = []  # (trace, agent_answer, ground_truth, category)
+            for trace, (question, answer, category) in zip(traces, test_samples):
                 agent_answer = (
                     trace.output.final_answer if trace.output else "[PARSE FAILED]"
                 )
@@ -216,9 +220,9 @@ class SelfImprovingLoop:
                     answer.strip().lower(),
                 )
                 status = "[OK]" if avg_score >= 0.8 else "[FAIL]"
-                _log("", f"    {status} {question[:50]}...")
+                _log("", f"    {status} [{category}] {question[:40]}...")
                 if avg_score < 0.8:
-                    failures.append((trace, agent_answer, answer))
+                    failures.append((trace, agent_answer, answer, category))
 
             # Always propose if any failures exist
             if len(failures) == 0:
@@ -327,17 +331,19 @@ class SelfImprovingLoop:
         _log("", f"  -> Base score: {base_score:.4f}")
         _log("", f"  -> Frontier: {self.manager.get_frontier()}")
 
-    async def _evaluate(self, data: list[tuple[str, str]]) -> float:
+    async def _evaluate(self, data: list[tuple[str, str, str]]) -> float:
         """Evaluate base agent on data.
 
         Args:
-            data: List of (question, answer) tuples.
+            data: List of (question, answer, category) tuples.
 
         Returns:
             Accuracy score (0.0 to 1.0).
         """
+        # Convert to (question, answer) format for evaluate_agent_parallel
+        qa_data = [(q, a) for q, a, _ in data]
         results = await evaluate_agent_parallel(
-            self.agents.base, data, max_concurrent=self.config.concurrency, cache=self.cache
+            self.agents.base, qa_data, max_concurrent=self.config.concurrency, cache=self.cache
         )
 
         score = 0.0
@@ -353,14 +359,14 @@ class SelfImprovingLoop:
     async def _mutate(
         self,
         parent: str,
-        failures: list[tuple[AgentTrace[AgentResponse], str, str]],
+        failures: list[tuple[AgentTrace[AgentResponse], str, str, str]],
         iteration: int,
     ) -> tuple[str, str, str] | None:
         """Run proposer and generator to create a mutation based on multiple failures.
 
         Args:
             parent: Name of the parent program.
-            failures: List of (trace, agent_answer, ground_truth) tuples from failed attempts.
+            failures: List of (trace, agent_answer, ground_truth, category) tuples from failed attempts.
             iteration: Current iteration number.
 
         Returns:

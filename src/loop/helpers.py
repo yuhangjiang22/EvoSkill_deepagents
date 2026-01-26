@@ -9,14 +9,14 @@ if TYPE_CHECKING:
 
 
 def build_proposer_query(
-    traces_with_answers: list[tuple["AgentTrace", str, str]],
+    traces_with_answers: list[tuple["AgentTrace", str, str, str]],
     feedback_history: str,
     evolution_mode: str = "skill_only",
 ) -> str:
     """Build the query for the proposer agent from multiple failure traces.
 
     Args:
-        traces_with_answers: List of (trace, agent_answer, ground_truth) tuples.
+        traces_with_answers: List of (trace, agent_answer, ground_truth, category) tuples.
         feedback_history: Previous feedback history.
         evolution_mode: "skill_only" or "prompt_only" - affects trace truncation.
 
@@ -32,9 +32,13 @@ def build_proposer_query(
                 existing_skills.append(skill_dir.name)
     skills_list = "\n".join([f"- {s}" for s in existing_skills]) or "None"
 
+    # Collect categories for summary
+    categories = [cat for _, _, _, cat in traces_with_answers]
+    category_summary = ", ".join(sorted(set(categories)))
+
     # Build failure summaries
     failure_sections = []
-    for i, (trace, agent_answer, ground_truth) in enumerate(traces_with_answers, 1):
+    for i, (trace, agent_answer, ground_truth, category) in enumerate(traces_with_answers, 1):
         # For prompt mode, use more aggressive truncation to focus on patterns
         # For skill mode, keep full trace to see tool usage
         if evolution_mode == "prompt_only":
@@ -42,7 +46,7 @@ def build_proposer_query(
         else:
             trace_summary = trace.summarize()
 
-        failure_sections.append(f"""### Failure {i}
+        failure_sections.append(f"""### Failure {i} [Category: {category}]
 {trace_summary}
 
 Agent Answer: {agent_answer}
@@ -57,7 +61,7 @@ Ground Truth: {ground_truth}
 ## Previous Attempts Feedback
 {feedback_history}
 
-## Current Failures ({len(traces_with_answers)} samples)
+## Current Failures ({len(traces_with_answers)} samples across categories: {category_summary})
 
 Analyze the patterns across these failures to identify a GENERAL improvement, not a fix for any single case.
 
@@ -68,7 +72,7 @@ Analyze the patterns across these failures to identify a GENERAL improvement, no
 2. If yes → propose EDITING that skill (action="edit", target_skill="skill-name")
 3. If no → propose a NEW skill (action="create")
 4. Reference any related DISCARDED iterations and explain how your proposal differs
-5. Identify what COMMON pattern or capability gap caused these failures"""
+5. Identify what COMMON pattern or capability gap caused these failures across categories"""
 
 
 def build_skill_query(proposer_trace: "AgentTrace[ProposerResponse]") -> str:

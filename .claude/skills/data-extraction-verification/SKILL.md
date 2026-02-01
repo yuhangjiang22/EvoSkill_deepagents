@@ -64,3 +64,49 @@ Cross-Verification: [how verified - totals, re-read, alternative source]
 | Wrong metric | "Amount outstanding" when asked for "Sales and redemptions" | Explicit metric match check |
 | Wrong granularity | Calendar year average vs specific month | Verify time period matches question |
 | Wrong aggregation | Regional total vs individual country | Confirm geographic scope |
+| Count mismatch | 119 values extracted instead of 120 | Track running count, verify against expected |
+| Cumulative drift | Small errors compound to 4% aggregate error | Verify against subtotals at checkpoints |
+| Block navigation | Misaligned row/column in multi-block table | Map table structure explicitly before extraction |
+
+---
+
+## Bulk Extraction Protocol (for aggregation tasks)
+
+For scenarios requiring extraction of many values (>10) that will be aggregated.
+
+### Pre-Bulk Extraction Setup
+
+1. **Count expected values**: Calculate before starting (e.g., "120 months = 10 years × 12 months")
+2. **Identify checkpoints**: Find any subtotals or totals in the table that can serve as verification points
+3. **Map table structure**: Document explicitly (e.g., "3 row blocks covering years X-Y, 4 columns per block")
+
+### Incremental Verification During Extraction
+
+1. **Track running count**: Maintain count of extracted values
+2. **Verify at logical groups**: After each year, row block, or section, verify count matches expected
+3. **Verify against subtotals**: If table has subtotals, verify running sum matches before proceeding
+
+### Sample Verification
+
+For large extractions (>20 values):
+1. **Spot-check at least 3 random values** by re-extracting independently
+2. **If any spot-check fails**, re-extract the entire dataset for that section
+
+### Post-Aggregation Sanity Checks
+
+1. **Compare against expected range**: E.g., "average yield spread typically 0.5-1.5%"
+2. **Verify count**: "I extracted N values, expected M" - mismatch indicates navigation error
+3. **Cross-validate paths**: If multiple aggregation paths exist (e.g., sum of row totals vs sum of individual cells), verify they match
+
+### Bulk Extraction Verification Output Format
+
+```
+## Bulk Extraction Verification
+Table: [table name]
+Expected count: [N values]
+Extracted count: [N values] ✓/✗
+Subtotal checkpoints: [list checkpoint verifications]
+Sample verification: [3 spot-checks with pass/fail]
+Final aggregate: [value]
+Sanity check: [reasonable range? Y/N]
+```

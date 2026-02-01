@@ -21,6 +21,7 @@ Analyze the question to determine:
 - **Time scope**: Single point, time series, year-over-year comparison
 - **Calculation type**: Raw extraction, inflation-adjusted, ratio, regression, risk metric (ES/VaR), forecast
 - **Output format**: Percentage, absolute value, [slope, intercept], ratio
+- **Calculation definition**: If the question uses a specific term (e.g., "mid-point normalized difference", "absolute difference", "ARIMA forecast"), explicitly state the mathematical formula/definition BEFORE proceeding
 
 ### Phase 2: Skill Selection
 
@@ -44,8 +45,16 @@ For the selected skills, map out the execution path:
 1. **Data retrieval**: Which treasury_bulletins_parsed files? What grep patterns?
 2. **Transformations**: Inflation adjustment? Return calculation? Currency conversion?
 3. **Analysis**: Regression? Risk metric? Ratio calculation?
-4. **Validation**: Apply data-extraction-verification at each extraction step
-5. **Output**: What format does the question expect?
+4. **Formula verification**:
+   - Write out the exact formula to be used
+   - Verify it matches the standard definition of the term in the question
+   - Common formulas:
+     - Mid-point normalized difference: `(V2 - V1) / ((V1 + V2) / 2)` → result is a dimensionless ratio
+     - Absolute difference: `|A - B|` → result has same units as inputs
+     - Percentage change: `(new - old) / old × 100` → result is percentage
+     - ARIMA forecasts: specify order (p,d,q) and verify it matches question requirements
+5. **Validation**: Apply data-extraction-verification at each extraction step
+6. **Output**: What format does the question expect?
 
 State assumptions explicitly:
 - "Assuming fiscal year convention from Treasury Bulletins..."
@@ -80,7 +89,36 @@ Before execution, articulate the plan:
 
 - Apply `data-extraction-verification` protocol for all data extraction
 - Verify each intermediate value before proceeding to calculations
-- Double-check final numeric output matches expected format
+- Complete pre-output verification before stating final answer
+
+### Phase 6: Pre-Output Verification (MANDATORY)
+
+Before outputting any final answer, verify:
+
+1. **Dimensionality check**: Does my answer have the correct units/dimensions?
+   - If question asks for a "ratio" or "normalized" value → answer should be dimensionless
+   - If question asks for "in billions" → answer should be a number representing billions
+   - If question asks for "percentage" → answer should be between 0-100 (or 0-1 depending on context)
+
+2. **Magnitude sanity check**: Is the answer in a reasonable range?
+   - Compare against intermediate values - does the answer make sense?
+
+3. **Formula-to-answer match**: Does my calculated value match what the formula produces?
+   - Re-check: If I calculated both numerator and denominator, did I actually DIVIDE?
+   - CRITICAL: Do not output the numerator when the question asks for a ratio
+
+4. **Question-to-answer match**: Re-read the question and verify the answer addresses EXACTLY what was asked
+
+**Verification output format:**
+```
+## Pre-Output Verification
+Question asks for: [exact phrase from question]
+Formula used: [formula with values substituted]
+My calculation produces: [value with units]
+Expected output type: [ratio/percentage/absolute value/etc.]
+Dimensionality: [correct/incorrect]
+Final answer: [value]
+```
 
 ## Remember
 

@@ -79,6 +79,7 @@ Before execution, articulate the plan:
 1. [step]
 2. [step]
 ...
+**Precision note** (if applicable): [number of decimal places to maintain in intermediate calculations]
 
 **Assumptions:** [list any]
 

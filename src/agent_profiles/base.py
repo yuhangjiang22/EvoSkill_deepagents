@@ -5,7 +5,15 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, Type, TypeVa
 
 from pydantic import BaseModel, ValidationError
 
-from .sdk_config import is_claude_sdk
+from .sdk_config import is_azure_sdk, is_claude_sdk, is_opencode_sdk
+
+try:
+    from openai import AzureOpenAI
+except ImportError:
+    AzureOpenAI = None  # type: ignore
+
+from src.agent_profiles.azure.runner import AzureReActRunner
+from src.agent_profiles.azure.skill_injection import inject_skills
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +158,7 @@ class Agent(Generic[T]):
             async with ClaudeSDKClient(options) as client:
                 await client.query(query)
                 return [msg async for msg in client.receive_response()]
-        else:
+        elif is_opencode_sdk():
             # OpenCode SDK path
             from opencode_ai import AsyncOpencode
 
@@ -197,6 +205,31 @@ class Agent(Generic[T]):
 
             # Return as single-item list for consistency with Claude SDK
             return [message]
+
+        elif is_azure_sdk():
+            import os
+            from src.agent_profiles.skill_generator import get_project_root
+            from pathlib import Path
+
+            system_prompt = inject_skills(
+                options.get("system", ""),
+                skills_dir=Path(get_project_root()) / ".claude" / "skills",
+            )
+            client = AzureOpenAI(
+                api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+                api_version="2024-08-01-preview",
+            )
+            deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
+            runner = AzureReActRunner(
+                client=client,
+                deployment=deployment,
+                system_prompt=system_prompt,
+                tool_schemas=options.get("tool_schemas", []),
+                tool_fns=options.get("tool_fns", {}),
+                output_schema=options.get("output_schema", {}),
+            )
+            return [runner.run(query)]
 
     async def _run_with_retry(self, query: str) -> list[Any]:
         """Execute query with timeout and exponential backoff retry."""
@@ -265,7 +298,7 @@ class Agent(Generic[T]):
                 raw_structured_output=raw_structured_output,
                 messages=messages,
             )
-        else:
+        elif is_opencode_sdk():
             # OpenCode SDK: single AssistantMessage with extra fields
             message = messages[0]
 
@@ -322,6 +355,36 @@ class Agent(Generic[T]):
                 usage=usage,
                 result=result_text,
                 is_error=parse_error is not None,
+                output=output,
+                parse_error=parse_error,
+                raw_structured_output=raw_structured_output,
+                messages=messages,
+            )
+        elif is_azure_sdk():
+            result = messages[0]  # Single dict from AzureReActRunner.run()
+            raw_structured_output = result.get("structured_output")
+            output = None
+            parse_error = None
+
+            if raw_structured_output is not None:
+                try:
+                    output = self.response_model.model_validate(raw_structured_output)
+                except (ValidationError, json.JSONDecodeError, TypeError) as e:
+                    parse_error = f"{type(e).__name__}: {str(e)}"
+            else:
+                parse_error = "No structured output returned"
+
+            return AgentTrace(
+                uuid=result.get("uuid", "unknown"),
+                session_id=result.get("session_id", "unknown"),
+                model=result.get("model", "unknown"),
+                tools=result.get("tools", []),
+                duration_ms=result.get("duration_ms", 0),
+                total_cost_usd=result.get("total_cost_usd", 0.0),
+                num_turns=result.get("num_turns", 1),
+                usage=result.get("usage", {}),
+                result=result.get("result", ""),
+                is_error=result.get("is_error", False) or parse_error is not None,
                 output=output,
                 parse_error=parse_error,
                 raw_structured_output=raw_structured_output,

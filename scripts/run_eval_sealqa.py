@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.agent_profiles import Agent, sealqa_agent_options, make_sealqa_agent_options
+from src.agent_profiles import Agent, sealqa_agent_options, make_sealqa_agent_options, set_sdk
 from src.evaluation.eval_full import evaluate_full, load_results
 from src.evaluation.sealqa_scorer import score_sealqa
 from src.schemas import AgentResponse
@@ -61,7 +61,25 @@ async def main():
         default="claude-opus-4-5-20251101",
         help="Model for agent (default: claude-opus-4-5-20251101)",
     )
+    parser.add_argument(
+        "--sdk",
+        type=str,
+        choices=["claude", "opencode", "azure"],
+        default="claude",
+        help="SDK to use: 'claude', 'opencode', or 'azure' (default: claude)",
+    )
     args = parser.parse_args()
+
+    # Set SDK based on CLI argument
+    set_sdk(args.sdk)
+
+    from src.agent_profiles.sdk_config import is_azure_sdk
+
+    if is_azure_sdk():
+        from src.agent_profiles.azure.agents import make_azure_base_agent_options
+        agent_options_factory = make_azure_base_agent_options(args.model)
+    else:
+        agent_options_factory = make_sealqa_agent_options(model=args.model)
 
     # Load dataset
     data = pd.read_csv(args.dataset)
@@ -88,7 +106,6 @@ async def main():
     ]
 
     # Create agent and run
-    agent_options_factory = make_sealqa_agent_options(model=args.model)
     agent = Agent(agent_options_factory, AgentResponse)
 
     model_info = f" (model: {args.model})" if args.model else " (model: opus)"

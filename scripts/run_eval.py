@@ -48,14 +48,26 @@ class EvalSettings(BaseSettings):
         default=Path("~/officeqa/officeqa.csv").expanduser(),
         description="Path to OfficeQA dataset CSV",
     )
-    sdk: Literal["claude", "opencode"] = Field(
+    sdk: Literal["claude", "opencode", "azure"] = Field(
         default="claude",
-        description="SDK to use: 'claude' or 'opencode'",
+        description="SDK to use: 'claude', 'opencode', or 'azure'",
     )
 
 
 async def main(settings: EvalSettings):
     set_sdk(settings.sdk)
+
+    from src.agent_profiles.sdk_config import is_azure_sdk
+
+    if is_azure_sdk():
+        from src.agent_profiles.azure.agents import make_azure_base_agent_options
+        agent_options = make_azure_base_agent_options(settings.model)
+    else:
+        agent_options = (
+            make_base_agent_options(model=settings.model)
+            if settings.model
+            else base_agent_options
+        )
 
     # Load dataset
     data = pd.read_csv(settings.dataset_path)
@@ -76,11 +88,6 @@ async def main(settings: EvalSettings):
     ]
 
     # Create agent and run
-    agent_options = (
-        make_base_agent_options(model=settings.model)
-        if settings.model
-        else base_agent_options
-    )
     agent = Agent(agent_options, AgentResponse)
 
     model_info = f" (model: {settings.model})" if settings.model else " (model: opus)"

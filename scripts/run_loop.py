@@ -84,9 +84,9 @@ class LoopSettings(BaseSettings):
     model: Optional[str] = Field(
         default=None, description="Model for base agent (opus, sonnet, haiku)"
     )
-    sdk: Literal["claude", "opencode"] = Field(
+    sdk: Literal["claude", "opencode", "azure"] = Field(
         default="claude",
-        description="SDK to use: 'claude' or 'opencode'",
+        description="SDK to use: 'claude', 'opencode', or 'azure'",
     )
 
 
@@ -139,6 +139,32 @@ async def main(settings: LoopSettings):
     # Set SDK based on CLI argument
     set_sdk(settings.sdk)
 
+    from src.agent_profiles.sdk_config import is_azure_sdk
+
+    if is_azure_sdk():
+        from src.agent_profiles.azure.agents import (
+            make_azure_base_agent_options,
+            make_azure_skill_proposer_options,
+            make_azure_prompt_proposer_options,
+            make_azure_skill_generator_options,
+            make_azure_prompt_generator_options,
+        )
+        _base_opts = make_azure_base_agent_options(settings.model)
+        _skill_proposer_opts = make_azure_skill_proposer_options()
+        _prompt_proposer_opts = make_azure_prompt_proposer_options()
+        _skill_gen_opts = make_azure_skill_generator_options()
+        _prompt_gen_opts = make_azure_prompt_generator_options()
+    else:
+        _base_opts = (
+            make_base_agent_options(model=settings.model)
+            if settings.model
+            else base_agent_options
+        )
+        _skill_proposer_opts = skill_proposer_options
+        _prompt_proposer_opts = prompt_proposer_options
+        _skill_gen_opts = skill_generator_options
+        _prompt_gen_opts = prompt_generator_options
+
     data = pd.read_csv(settings.dataset)
 
     # Stratified split by category
@@ -162,19 +188,12 @@ async def main(settings: LoopSettings):
         f"Split ratios: train={settings.train_ratio:.0%}, val={settings.val_ratio:.0%} (remaining {1 - settings.train_ratio - settings.val_ratio:.0%} unused)"
     )
 
-    # Use custom model for base agent if specified
-    base_options = (
-        make_base_agent_options(model=settings.model)
-        if settings.model
-        else base_agent_options
-    )
-
     agents = LoopAgents(
-        base=Agent(base_options, AgentResponse),
-        skill_proposer=Agent(skill_proposer_options, SkillProposerResponse),
-        prompt_proposer=Agent(prompt_proposer_options, PromptProposerResponse),
-        skill_generator=Agent(skill_generator_options, ToolGeneratorResponse),
-        prompt_generator=Agent(prompt_generator_options, PromptGeneratorResponse),
+        base=Agent(_base_opts, AgentResponse),
+        skill_proposer=Agent(_skill_proposer_opts, SkillProposerResponse),
+        prompt_proposer=Agent(_prompt_proposer_opts, PromptProposerResponse),
+        skill_generator=Agent(_skill_gen_opts, ToolGeneratorResponse),
+        prompt_generator=Agent(_prompt_gen_opts, PromptGeneratorResponse),
     )
     manager = ProgramManager(cwd=get_project_root())
 

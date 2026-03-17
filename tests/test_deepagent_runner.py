@@ -33,7 +33,9 @@ async def test_agent_run_returns_agent_trace():
         "structured_output": MyResponse(answer="42"),
     }
 
-    with patch("src.agent_profiles.base.create_deep_agent") as mock_create:
+    with patch("langchain_openai.AzureChatOpenAI"), \
+         patch("deepagents.backends.FilesystemBackend"), \
+         patch("src.agent_profiles.base.create_deep_agent") as mock_create:
         mock_graph = AsyncMock()
         mock_graph.ainvoke.return_value = mock_state
         mock_create.return_value = mock_graph
@@ -57,7 +59,9 @@ async def test_agent_run_handles_missing_structured_output():
         "structured_output": None,
     }
 
-    with patch("src.agent_profiles.base.create_deep_agent") as mock_create:
+    with patch("langchain_openai.AzureChatOpenAI"), \
+         patch("deepagents.backends.FilesystemBackend"), \
+         patch("src.agent_profiles.base.create_deep_agent") as mock_create:
         mock_graph = AsyncMock()
         mock_graph.ainvoke.return_value = mock_state
         mock_create.return_value = mock_graph

@@ -8,8 +8,8 @@ from src.agent_profiles.prompt_proposer.prompt import PROMPT_PROPOSER_SYSTEM_PRO
 from src.agent_profiles.skill_generator.prompt import SKILL_GENERATOR_SYSTEM_PROMPT
 from src.agent_profiles.prompt_generator.prompt import PROMPT_GENERATOR_SYSTEM_PROMPT
 
-_READ_ONLY = [list_files, read_file]
-_READ_WRITE = [list_files, read_file, write_file]
+_READ_ONLY = (list_files, read_file)
+_READ_WRITE = (list_files, read_file, write_file)
 
 
 def make_base_agent_options(model: str | None = None) -> DeepAgentOptions:

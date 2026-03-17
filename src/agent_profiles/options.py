@@ -1,5 +1,6 @@
 """Options dataclass for deepagents-backed agents."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from langchain_core.tools import BaseTool
 
@@ -15,5 +16,5 @@ class DeepAgentOptions:
                AZURE_OPENAI_DEPLOYMENT env var.
     """
     system_prompt: str
-    tools: list[BaseTool] = field(default_factory=list)
+    tools: Sequence[BaseTool] = field(default_factory=tuple)
     model: str | None = None

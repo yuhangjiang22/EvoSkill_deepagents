@@ -2,6 +2,14 @@ import pytest
 from pathlib import Path
 from langchain_core.tools import BaseTool
 from src.agent_profiles.tools import list_files, read_file, write_file
+from src.agent_profiles.options import DeepAgentOptions
+from src.agent_profiles.agents import (
+    make_base_agent_options,
+    make_skill_proposer_options,
+    make_prompt_proposer_options,
+    make_skill_generator_options,
+    make_prompt_generator_options,
+)
 
 
 def test_tools_are_langchain_tools():
@@ -42,16 +50,6 @@ def test_list_files_on_file_path(tmp_path):
     f.write_text("content")
     result = list_files.invoke({"directory": str(f)})
     assert "Error" in result
-
-
-from src.agent_profiles.options import DeepAgentOptions
-from src.agent_profiles.agents import (
-    make_base_agent_options,
-    make_skill_proposer_options,
-    make_prompt_proposer_options,
-    make_skill_generator_options,
-    make_prompt_generator_options,
-)
 
 
 def test_base_agent_options_has_read_only_tools():

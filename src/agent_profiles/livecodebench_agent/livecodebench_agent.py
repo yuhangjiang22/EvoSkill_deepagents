@@ -1,95 +1,41 @@
-from typing import Any, Union
-
-from src.agent_profiles.sdk_config import is_claude_sdk
-from src.agent_profiles.skill_generator import get_project_root
+from src.agent_profiles.options import DeepAgentOptions
+from src.agent_profiles.tools import list_files, read_file, write_file
 from src.schemas import AgentResponse
 
 
 # Use full tool suite for LiveCodeBench (agent can use tools to test/debug)
-LIVECODEBENCH_AGENT_TOOLS = [
-    "Read",
-    "Write",
-    "Bash",
-    "Glob",
-    "Grep",
-    "Edit",
-    "WebFetch",
-    "WebSearch",
-    "TodoWrite",
-    "BashOutput",
-    "Skill",
-]
+LIVECODEBENCH_AGENT_TOOLS = (list_files, read_file, write_file)
 
 # NOTE: Question formatting (in livecodebench_format.py) matches Artificial Analysis.
-# However, we use default Claude Code system prompts and tools for better performance.
+# However, we use default system prompts and tools for better performance.
 # Reference: https://artificialanalysis.ai/benchmarks/livecodebench
+
+
+def make_livecodebench_agent_options(model: str | None = None) -> DeepAgentOptions:
+    """Create DeepAgentOptions for LiveCodeBench evaluation.
+
+    Args:
+        model: Model to use (e.g., "opus", "sonnet"). If None, uses default.
+
+    Returns:
+        DeepAgentOptions configured for LiveCodeBench.
+    """
+    return DeepAgentOptions(
+        system_prompt="You are an expert competitive programmer. Solve the given coding problem by writing correct, efficient Python code.",
+        tools=LIVECODEBENCH_AGENT_TOOLS,
+        model=model,
+    )
 
 
 def get_livecodebench_agent_options(
     model: str | None = None,
-) -> Union[Any, dict[str, Any]]:
-    """
-    Factory function that creates agent options for LiveCodeBench evaluation.
-
-    Returns ClaudeAgentOptions for Claude SDK or dict for OpenCode SDK.
-    Uses default system prompts and full tool access.
+) -> DeepAgentOptions:
+    """Factory function that creates agent options for LiveCodeBench evaluation.
 
     Args:
-        model: Model to use (e.g., "opus", "sonnet"). If None, uses SDK default.
+        model: Model to use (e.g., "opus", "sonnet"). If None, uses default.
     """
-    if is_claude_sdk():
-        from claude_agent_sdk import ClaudeAgentOptions
-
-        # Use default claude_code preset (no custom append)
-        system_prompt = {"type": "preset", "preset": "claude_code"}
-        output_format = {
-            "type": "json_schema",
-            "schema": AgentResponse.model_json_schema(),
-        }
-
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            output_format=output_format,
-            allowed_tools=LIVECODEBENCH_AGENT_TOOLS,
-            setting_sources=["user", "project"],
-            permission_mode="acceptEdits",
-            cwd=get_project_root(),
-            max_buffer_size=10 * 1024 * 1024,  # 10MB buffer (default is 1MB)
-        )
-
-        if model:
-            options.model = model
-
-        return options
-    else:
-        # OpenCode SDK - return dict with default system prompt and tools
-        return {
-            "system": "",  # Use default system prompt
-            "format": {
-                "type": "json_schema",
-                "schema": AgentResponse.model_json_schema(),
-            },
-            "tools": {tool: True for tool in LIVECODEBENCH_AGENT_TOOLS},
-            "mode": "build",
-            "model_id": model or "deepseek-ai/DeepSeek-V3",
-            "provider_id": "togetherai",
-        }
-
-
-def make_livecodebench_agent_options(model: str | None = None):
-    """Create a factory function for LiveCodeBench agent options with a specific model.
-
-    Args:
-        model: Model to use (e.g., "opus", "sonnet"). If None, uses SDK default.
-
-    Returns:
-        A callable that returns ClaudeAgentOptions configured with the model.
-    """
-
-    def factory() -> Union[Any, dict[str, Any]]:
-        return get_livecodebench_agent_options(model=model)
-
-    return factory
+    return make_livecodebench_agent_options(model=model)
 
 
 # For backward compatibility, expose the factory as the options

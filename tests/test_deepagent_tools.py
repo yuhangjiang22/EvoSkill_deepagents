@@ -42,3 +42,39 @@ def test_list_files_on_file_path(tmp_path):
     f.write_text("content")
     result = list_files.invoke({"directory": str(f)})
     assert "Error" in result
+
+
+from src.agent_profiles.options import DeepAgentOptions
+from src.agent_profiles.agents import (
+    make_base_agent_options,
+    make_skill_proposer_options,
+    make_prompt_proposer_options,
+    make_skill_generator_options,
+    make_prompt_generator_options,
+)
+
+
+def test_base_agent_options_has_read_only_tools():
+    opts = make_base_agent_options()
+    assert isinstance(opts, DeepAgentOptions)
+    tool_names = [t.name for t in opts.tools]
+    assert "list_files" in tool_names
+    assert "read_file" in tool_names
+    assert "write_file" not in tool_names
+
+
+def test_skill_generator_options_has_write_tool():
+    opts = make_skill_generator_options()
+    tool_names = [t.name for t in opts.tools]
+    assert "write_file" in tool_names
+
+
+def test_prompt_generator_options_has_write_tool():
+    opts = make_prompt_generator_options()
+    tool_names = [t.name for t in opts.tools]
+    assert "write_file" in tool_names
+
+
+def test_make_base_agent_options_accepts_model():
+    opts = make_base_agent_options(model="gpt-4o")
+    assert opts.model == "gpt-4o"

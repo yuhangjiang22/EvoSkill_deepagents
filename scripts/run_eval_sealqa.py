@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.agent_profiles import Agent, make_sealqa_agent_options
+from src.agent_profiles import Agent, sealqa_agent_options, make_sealqa_agent_options
 from src.evaluation.eval_full import evaluate_full, load_results
 from src.evaluation.sealqa_scorer import score_sealqa
 from src.schemas import AgentResponse
@@ -63,7 +63,7 @@ async def main():
     )
     args = parser.parse_args()
 
-    agent_options_factory = make_sealqa_agent_options(model=args.model)
+    agent_options_factory = make_sealqa_agent_options(model=args.model) if args.model else sealqa_agent_options
 
     # Load dataset
     data = pd.read_csv(args.dataset)

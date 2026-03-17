@@ -10,6 +10,8 @@ def list_files(directory: str) -> str:
     path = Path(directory)
     if not path.exists():
         return f"Error: directory '{directory}' does not exist."
+    if not path.is_dir():
+        return f"Error: '{directory}' is not a directory."
     entries = sorted(path.iterdir())
     if not entries:
         return "(empty directory)"

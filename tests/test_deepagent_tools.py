@@ -35,3 +35,10 @@ def test_write_file(tmp_path):
     result = write_file.invoke({"path": path, "content": "# My Skill"})
     assert "written" in result.lower()
     assert Path(path).read_text() == "# My Skill"
+
+
+def test_list_files_on_file_path(tmp_path):
+    f = tmp_path / "file.txt"
+    f.write_text("content")
+    result = list_files.invoke({"directory": str(f)})
+    assert "Error" in result

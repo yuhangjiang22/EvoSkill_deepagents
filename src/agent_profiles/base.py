@@ -15,8 +15,12 @@ T = TypeVar("T", bound=BaseModel)
 
 try:
     from deepagents import create_deep_agent
-except ImportError:
-    create_deep_agent = None  # type: ignore
+except ImportError as _deepagents_import_error:
+    def create_deep_agent(*args, **kwargs):  # type: ignore[misc]
+        raise ImportError(
+            "Package 'deepagents' is not installed. "
+            "Run: pip install deepagents"
+        ) from _deepagents_import_error
 
 
 class AgentTrace(BaseModel, Generic[T]):
@@ -104,12 +108,16 @@ class Agent(Generic[T]):
         return self._options
 
     async def _execute_query(self, query: str) -> dict:
+        import sys
         options = self._get_options()
         project_root = _get_project_root()
 
-        # Build kwargs; real sub-packages only needed when running against live backend.
-        # In tests, create_deep_agent is patched and these kwargs are ignored by the mock.
-        try:
+        # These imports are only reached in production (not during tests, because
+        # create_deep_agent is patched at module level and the mock intercepts the
+        # call before any kwargs are evaluated).  We guard them so that a missing
+        # package raises a clear error at import time rather than a cryptic one
+        # from deep inside the library.
+        if "deepagents" in sys.modules:
             from deepagents.backends import FilesystemBackend
             from langchain_openai import AzureChatOpenAI
 
@@ -121,7 +129,7 @@ class Agent(Generic[T]):
                 api_version="2024-08-01-preview",
             )
             backend = FilesystemBackend(root_dir=str(project_root), virtual_mode=True)
-        except ImportError:
+        else:
             model = None
             backend = None
 

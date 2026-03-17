@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.agent_profiles import Agent, make_livecodebench_agent_options, set_sdk
+from src.agent_profiles import Agent, make_livecodebench_agent_options
 from src.evaluation.eval_full import evaluate_full, load_results
 from src.evaluation.livecodebench import (
     score_livecodebench,
@@ -73,17 +73,7 @@ async def main():
         default="claude-opus-4-5-20251101",
         help="Model for agent (default: claude-opus-4-5-20251101)",
     )
-    parser.add_argument(
-        "--sdk",
-        type=str,
-        choices=["claude", "opencode"],
-        default="claude",
-        help="SDK to use: 'claude' or 'opencode' (default: claude)",
-    )
     args = parser.parse_args()
-
-    # Set SDK
-    set_sdk(args.sdk)
 
     # Ensure dataset is downloaded
     if args.dataset is None:
@@ -107,7 +97,7 @@ async def main():
     print(
         f"Dataset: {len(data)} samples (platform={args.platform}, difficulty={args.difficulty})"
     )
-    print(f"SDK: {args.sdk}, Model: {args.model}")
+    print(f"Model: {args.model}")
 
     # Prepare items: (index, formatted_question, public_test_cases)
     items = [

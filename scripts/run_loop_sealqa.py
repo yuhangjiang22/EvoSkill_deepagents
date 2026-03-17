@@ -15,7 +15,6 @@ from src.agent_profiles import (
     prompt_proposer_options,
     skill_generator_options,
     prompt_generator_options,
-    set_sdk,
 )
 from src.agent_profiles.skill_generator import get_project_root
 from src.evaluation.sealqa_scorer import score_sealqa
@@ -155,41 +154,15 @@ def parse_args() -> argparse.Namespace:
         default="claude-opus-4-5-20251101",
         help="Model for base agent (default: opus via SDK default)",
     )
-    parser.add_argument(
-        "--sdk",
-        type=str,
-        choices=["claude", "opencode", "azure"],
-        default="claude",
-        help="SDK to use: 'claude', 'opencode', or 'azure' (default: claude)",
-    )
     return parser.parse_args()
 
 
 async def main(args: argparse.Namespace):
-    # Set SDK based on CLI argument
-    set_sdk(args.sdk)
-
-    from src.agent_profiles.sdk_config import is_azure_sdk
-
-    if is_azure_sdk():
-        from src.agent_profiles.azure.agents import (
-            make_azure_base_agent_options,
-            make_azure_skill_proposer_options,
-            make_azure_prompt_proposer_options,
-            make_azure_skill_generator_options,
-            make_azure_prompt_generator_options,
-        )
-        _base_opts = make_azure_base_agent_options(args.model)
-        _skill_proposer_opts = make_azure_skill_proposer_options()
-        _prompt_proposer_opts = make_azure_prompt_proposer_options()
-        _skill_gen_opts = make_azure_skill_generator_options()
-        _prompt_gen_opts = make_azure_prompt_generator_options()
-    else:
-        _base_opts = make_sealqa_agent_options(model=args.model) if args.model else sealqa_agent_options
-        _skill_proposer_opts = skill_proposer_options
-        _prompt_proposer_opts = prompt_proposer_options
-        _skill_gen_opts = skill_generator_options
-        _prompt_gen_opts = prompt_generator_options
+    _base_opts = make_sealqa_agent_options(model=args.model) if args.model else sealqa_agent_options
+    _skill_proposer_opts = skill_proposer_options
+    _prompt_proposer_opts = prompt_proposer_options
+    _skill_gen_opts = skill_generator_options
+    _prompt_gen_opts = prompt_generator_options
 
     data = pd.read_csv(args.dataset)
 

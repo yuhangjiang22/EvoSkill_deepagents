@@ -20,7 +20,6 @@ from src.agent_profiles import (
     prompt_proposer_options,
     skill_generator_options,
     prompt_generator_options,
-    set_sdk,
 )
 from src.agent_profiles.skill_generator import get_project_root
 from src.registry import ProgramManager
@@ -84,10 +83,6 @@ class LoopSettings(BaseSettings):
     model: Optional[str] = Field(
         default=None, description="Model for base agent (opus, sonnet, haiku)"
     )
-    sdk: Literal["claude", "opencode", "azure"] = Field(
-        default="claude",
-        description="SDK to use: 'claude', 'opencode', or 'azure'",
-    )
 
 
 def stratified_split(
@@ -136,34 +131,11 @@ def stratified_split(
 
 
 async def main(settings: LoopSettings):
-    # Set SDK based on CLI argument
-    set_sdk(settings.sdk)
-
-    from src.agent_profiles.sdk_config import is_azure_sdk
-
-    if is_azure_sdk():
-        from src.agent_profiles.azure.agents import (
-            make_azure_base_agent_options,
-            make_azure_skill_proposer_options,
-            make_azure_prompt_proposer_options,
-            make_azure_skill_generator_options,
-            make_azure_prompt_generator_options,
-        )
-        _base_opts = make_azure_base_agent_options(settings.model)
-        _skill_proposer_opts = make_azure_skill_proposer_options()
-        _prompt_proposer_opts = make_azure_prompt_proposer_options()
-        _skill_gen_opts = make_azure_skill_generator_options()
-        _prompt_gen_opts = make_azure_prompt_generator_options()
-    else:
-        _base_opts = (
-            make_base_agent_options(model=settings.model)
-            if settings.model
-            else base_agent_options
-        )
-        _skill_proposer_opts = skill_proposer_options
-        _prompt_proposer_opts = prompt_proposer_options
-        _skill_gen_opts = skill_generator_options
-        _prompt_gen_opts = prompt_generator_options
+    _base_opts = make_base_agent_options(model=settings.model) if settings.model else base_agent_options
+    _skill_proposer_opts = skill_proposer_options
+    _prompt_proposer_opts = prompt_proposer_options
+    _skill_gen_opts = skill_generator_options
+    _prompt_gen_opts = prompt_generator_options
 
     data = pd.read_csv(settings.dataset)
 

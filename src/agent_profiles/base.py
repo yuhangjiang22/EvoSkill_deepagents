@@ -1,49 +1,32 @@
 import asyncio
-import json
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Generic, Optional, Type, TypeVar, Union
+import os
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Generic, Optional, Type, TypeVar
 
+from langchain_core.messages import AIMessage
 from pydantic import BaseModel, ValidationError
-
-from .sdk_config import is_azure_sdk, is_claude_sdk, is_opencode_sdk
-
-try:
-    from openai import AzureOpenAI
-except ImportError:
-    AzureOpenAI = None  # type: ignore
-
-from src.agent_profiles.azure.runner import AzureReActRunner
-from src.agent_profiles.azure.skill_injection import inject_skills
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# Import ClaudeAgentOptions at module level for type hints only
-if TYPE_CHECKING:
-    from claude_agent_sdk import ClaudeAgentOptions as ClaudeAgentOptionsType
-else:
-    ClaudeAgentOptionsType = Any
-
-# Type alias for options that can be static or dynamically generated
-# Supports both ClaudeAgentOptions and dict (for opencode)
-OptionsProvider = Union[
-    ClaudeAgentOptionsType,
-    dict[str, Any],
-    Callable[[], Union[ClaudeAgentOptionsType, dict[str, Any]]],
-]
+try:
+    from deepagents import create_deep_agent
+except ImportError:
+    create_deep_agent = None  # type: ignore
 
 
 class AgentTrace(BaseModel, Generic[T]):
     """Metadata and output from an agent run."""
 
-    # From first message (SystemMessage)
     uuid: str
     session_id: str
     model: str
     tools: list[str]
 
-    # From last message (ResultMessage)
     duration_ms: int
     total_cost_usd: float
     num_turns: int
@@ -51,35 +34,18 @@ class AgentTrace(BaseModel, Generic[T]):
     result: str
     is_error: bool
 
-    # The validated structured output (None if parsing failed)
     output: Optional[T] = None
-
-    # Error info when output parsing fails
     parse_error: Optional[str] = None
     raw_structured_output: Optional[Any] = None
-
-    # Full response list for debugging
     messages: list[Any]
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}
 
     def summarize(
         self,
         head_chars: int = 60_000,
         tail_chars: int = 60_000,
     ) -> str:
-        """
-        Create a summary of the trace for passing to downstream agents.
-
-        - On success: returns full trace
-        - On failure (parse_error): truncates to head + tail to avoid context exhaustion
-
-        Args:
-            head_chars: Characters to keep from start (only used on failure)
-            tail_chars: Characters to keep from end (only used on failure)
-        """
-        # Build the core info
         lines = [
             f"Model: {self.model}",
             f"Turns: {self.num_turns}",
@@ -93,10 +59,8 @@ class AgentTrace(BaseModel, Generic[T]):
         if self.output:
             lines.append(f"Output: {self.output}")
 
-        # Convert result to string
         result_str = str(self.result) if self.result else ""
 
-        # Only truncate on failure
         if self.parse_error and len(result_str) > (head_chars + tail_chars):
             truncated_middle = len(result_str) - head_chars - tail_chars
             lines.append(f"\n## Result (truncated, {truncated_middle:,} chars omitted)")
@@ -109,12 +73,20 @@ class AgentTrace(BaseModel, Generic[T]):
         return "\n".join(lines)
 
 
+def _get_project_root() -> Path:
+    """Return project root (directory containing pyproject.toml)."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "pyproject.toml").exists():
+            return parent
+    return Path.cwd()
+
+
 class Agent(Generic[T]):
-    """Simple wrapper for running Claude agents.
+    """Wrapper for running deepagents-backed agents.
 
     Args:
-        options: Either a ClaudeAgentOptions instance (static) or a callable
-                 that returns ClaudeAgentOptions (dynamic, called on each run).
+        options: DeepAgentOptions instance.
         response_model: Pydantic model for structured output validation.
     """
 
@@ -122,117 +94,49 @@ class Agent(Generic[T]):
     MAX_RETRIES = 3
     INITIAL_BACKOFF = 30  # seconds
 
-    def __init__(self, options: OptionsProvider, response_model: Type[T]):
+    def __init__(self, options: Any, response_model: Type[T]):
         self._options = options
         self.response_model = response_model
 
-    def _get_options(self) -> Union[ClaudeAgentOptionsType, dict[str, Any]]:
-        """Get options, calling the provider if it's a callable."""
+    def _get_options(self) -> Any:
         if callable(self._options):
             return self._options()
         return self._options
 
-    async def _execute_query(self, query: str) -> list[Any]:
-        """Execute a single query attempt."""
+    async def _execute_query(self, query: str) -> dict:
         options = self._get_options()
+        project_root = _get_project_root()
 
-        if is_claude_sdk():
-            # Claude SDK path
-            from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+        # Build kwargs; real sub-packages only needed when running against live backend.
+        # In tests, create_deep_agent is patched and these kwargs are ignored by the mock.
+        try:
+            from deepagents.backends import FilesystemBackend
+            from langchain_openai import AzureChatOpenAI
 
-            # Convert dict to ClaudeAgentOptions if needed
-            if isinstance(options, dict):
-                claude_opts = ClaudeAgentOptions(
-                    system_prompt=options.get("system"),
-                    allowed_tools=list(options.get("tools", {}).keys())
-                    if options.get("tools")
-                    else [],
-                    output_format=options.get("format"),
-                    setting_sources=["user", "project"],
-                    permission_mode="acceptEdits",
-                )
-                if "model_id" in options and "claude" in options["model_id"].lower():
-                    claude_opts.model = options["model_id"]
-                options = claude_opts
-
-            async with ClaudeSDKClient(options) as client:
-                await client.query(query)
-                return [msg async for msg in client.receive_response()]
-        elif is_opencode_sdk():
-            # OpenCode SDK path
-            from opencode_ai import AsyncOpencode
-
-            if not isinstance(options, dict):
-                raise TypeError(
-                    f"OpenCode SDK requires dict options, got {type(options)}"
-                )
-
-            # Start opencode server if needed
-            import subprocess
-            import time
-
-            try:
-                # Quick check if server is running
-                client = AsyncOpencode(base_url="http://127.0.0.1:4096")
-                await client.session.create(extra_body={})
-            except Exception:
-                # Start server
-                subprocess.Popen(
-                    ["opencode", "serve", "--port", "4096", "--hostname", "127.0.0.1"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                time.sleep(2)
-                client = AsyncOpencode(base_url="http://127.0.0.1:4096")
-
-            session = await client.session.create(extra_body={})
-
-            extra_body = {}
-            if "format" in options:
-                extra_body["format"] = options["format"]
-
-            message = await client.session.chat(
-                id=session.id,
-                model_id=options.get("model_id", "zai-org/GLM-5"),
-                provider_id=options.get("provider_id", "togetherai"),
-                parts=[{"type": "text", "text": query}],
-                system=options.get("system"),
-                mode=options.get("mode", "build"),
-                tools=options.get("tools", {}),
-                extra_body=extra_body if extra_body else None,
-            )
-
-            # Return as single-item list for consistency with Claude SDK
-            return [message]
-
-        elif is_azure_sdk():
-            import os
-            from src.agent_profiles.skill_generator import get_project_root
-            from pathlib import Path
-
-            system_prompt = inject_skills(
-                options.get("system", ""),
-                skills_dir=Path(get_project_root()) / ".claude" / "skills",
-            )
-            client = AzureOpenAI(
-                api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
+            deployment = options.model or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
+            model = AzureChatOpenAI(
+                azure_deployment=deployment,
                 azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT", ""),
+                api_key=os.environ.get("AZURE_OPENAI_API_KEY", ""),
                 api_version="2024-08-01-preview",
             )
-            deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
-            runner = AzureReActRunner(
-                client=client,
-                deployment=deployment,
-                system_prompt=system_prompt,
-                tool_schemas=options.get("tool_schemas", []),
-                tool_fns=options.get("tool_fns", {}),
-                output_schema=options.get("output_schema", {}),
-            )
-            return [runner.run(query)]
+            backend = FilesystemBackend(root_dir=str(project_root), virtual_mode=True)
+        except ImportError:
+            model = None
+            backend = None
 
-    async def _run_with_retry(self, query: str) -> list[Any]:
-        """Execute query with timeout and exponential backoff retry."""
+        agent = create_deep_agent(
+            model=model,
+            tools=list(options.tools),
+            system_prompt=options.system_prompt,
+            response_format=self.response_model,
+            backend=backend,
+            skills=[".claude/skills/"],
+        )
+
+        return await agent.ainvoke({"messages": [{"role": "user", "content": query}]})
+
+    async def _run_with_retry(self, query: str) -> dict:
         last_error: Exception | None = None
         backoff = self.INITIAL_BACKOFF
 
@@ -255,138 +159,57 @@ class Agent(Generic[T]):
 
             if attempt < self.MAX_RETRIES - 1:
                 await asyncio.sleep(backoff)
-                backoff *= 2  # Exponential backoff
+                backoff *= 2
 
         raise last_error if last_error else RuntimeError("All retries exhausted")
 
-    async def run(self, query: str) -> AgentTrace[T]:
-        messages = await self._run_with_retry(query)
+    async def run(self, query: str) -> "AgentTrace[T]":
+        start_ms = int(time.time() * 1000)
+        options = self._get_options()
 
-        if is_claude_sdk():
-            # Claude SDK: messages list with SystemMessage, AssistantMessage, ResultMessage
-            first = messages[0]
-            last = messages[-1]
+        state = await self._run_with_retry(query)
 
-            # Try to parse structured output
-            output = None
-            parse_error = None
-            raw_structured_output = last.structured_output
+        messages = state.get("messages", [])
+        raw_structured_output = state.get("structured_output")
 
-            if raw_structured_output is not None:
+        # Extract text from last AI message
+        result_text = ""
+        num_turns = 0
+        for msg in reversed(messages):
+            if isinstance(msg, AIMessage):
+                if not result_text:
+                    result_text = msg.content or ""
+                num_turns += 1
+
+        # Validate structured output
+        output = None
+        parse_error = None
+        if raw_structured_output is not None:
+            if isinstance(raw_structured_output, self.response_model):
+                output = raw_structured_output
+            else:
                 try:
                     output = self.response_model.model_validate(raw_structured_output)
-                except (ValidationError, json.JSONDecodeError, TypeError) as e:
-                    parse_error = f"{type(e).__name__}: {str(e)}"
-            else:
-                parse_error = (
-                    "No structured output returned (context limit likely exceeded)"
-                )
+                except (ValidationError, TypeError) as e:
+                    parse_error = f"{type(e).__name__}: {e}"
+        else:
+            parse_error = "No structured output returned (context limit likely exceeded)"
 
-            return AgentTrace(
-                uuid=first.data.get("uuid"),
-                session_id=last.session_id,
-                model=first.data.get("model"),
-                tools=first.data.get("tools", []),
-                duration_ms=last.duration_ms,
-                total_cost_usd=last.total_cost_usd,
-                num_turns=last.num_turns,
-                usage=last.usage,
-                result=last.result,
-                is_error=last.is_error or parse_error is not None,
-                output=output,
-                parse_error=parse_error,
-                raw_structured_output=raw_structured_output,
-                messages=messages,
-            )
-        elif is_opencode_sdk():
-            # OpenCode SDK: single AssistantMessage with extra fields
-            message = messages[0]
+        deployment = options.model or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "unknown")
 
-            # Extract structured output from info dict (extra field)
-            output = None
-            parse_error = None
-            raw_structured_output = None
-
-            if hasattr(message, "info") and message.info:
-                raw_structured_output = message.info.get("structured")
-
-            if raw_structured_output is not None:
-                try:
-                    output = self.response_model.model_validate(raw_structured_output)
-                except (ValidationError, json.JSONDecodeError, TypeError) as e:
-                    parse_error = f"{type(e).__name__}: {str(e)}"
-            else:
-                parse_error = (
-                    "No structured output returned (context limit likely exceeded)"
-                )
-
-            # Extract text from parts (extra field)
-            result_text = ""
-            if hasattr(message, "parts"):
-                for part in message.parts:
-                    if isinstance(part, dict) and part.get("type") == "text":
-                        result_text += part.get("text", "")
-
-            # Get metadata from info dict
-            info = message.info if hasattr(message, "info") else {}
-            usage = info.get("tokens", {}) if info else {}
-            cost = info.get("cost", 0.0) if info else 0.0
-
-            options = self._get_options()
-            model_name = (
-                options.get("model_id", "unknown")
-                if isinstance(options, dict)
-                else "unknown"
-            )
-            tools = (
-                list(options.get("tools", {}).keys())
-                if isinstance(options, dict) and options.get("tools")
-                else []
-            )
-
-            return AgentTrace(
-                uuid=message.session_id or "unknown",
-                session_id=message.session_id or "unknown",
-                model=model_name,
-                tools=tools,
-                duration_ms=0,
-                total_cost_usd=cost,
-                num_turns=1,
-                usage=usage,
-                result=result_text,
-                is_error=parse_error is not None,
-                output=output,
-                parse_error=parse_error,
-                raw_structured_output=raw_structured_output,
-                messages=messages,
-            )
-        elif is_azure_sdk():
-            result = messages[0]  # Single dict from AzureReActRunner.run()
-            raw_structured_output = result.get("structured_output")
-            output = None
-            parse_error = None
-
-            if raw_structured_output is not None:
-                try:
-                    output = self.response_model.model_validate(raw_structured_output)
-                except (ValidationError, json.JSONDecodeError, TypeError) as e:
-                    parse_error = f"{type(e).__name__}: {str(e)}"
-            else:
-                parse_error = "No structured output returned"
-
-            return AgentTrace(
-                uuid=result.get("uuid", "unknown"),
-                session_id=result.get("session_id", "unknown"),
-                model=result.get("model", "unknown"),
-                tools=result.get("tools", []),
-                duration_ms=result.get("duration_ms", 0),
-                total_cost_usd=result.get("total_cost_usd", 0.0),
-                num_turns=result.get("num_turns", 1),
-                usage=result.get("usage", {}),
-                result=result.get("result", ""),
-                is_error=result.get("is_error", False) or parse_error is not None,
-                output=output,
-                parse_error=parse_error,
-                raw_structured_output=raw_structured_output,
-                messages=messages,
-            )
+        return AgentTrace(
+            uuid=str(uuid.uuid4()),
+            session_id=str(uuid.uuid4()),
+            model=deployment,
+            tools=[t.name for t in options.tools],
+            duration_ms=int(time.time() * 1000) - start_ms,
+            total_cost_usd=0.0,
+            num_turns=num_turns,
+            usage={},
+            result=result_text,
+            is_error=parse_error is not None,
+            output=output,
+            parse_error=parse_error,
+            raw_structured_output=raw_structured_output,
+            messages=messages,
+        )

@@ -1,7 +1,7 @@
-# src/agent_profiles/options.py
 """Options dataclass for deepagents-backed agents."""
 
 from dataclasses import dataclass, field
+from langchain_core.tools import BaseTool
 
 
 @dataclass
@@ -15,5 +15,5 @@ class DeepAgentOptions:
                AZURE_OPENAI_DEPLOYMENT env var.
     """
     system_prompt: str
-    tools: list = field(default_factory=list)
+    tools: list[BaseTool] = field(default_factory=list)
     model: str | None = None

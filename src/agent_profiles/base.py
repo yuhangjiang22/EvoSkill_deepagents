@@ -178,7 +178,7 @@ class Agent(Generic[T]):
         state = await self._run_with_retry(query)
 
         messages = state.get("messages", [])
-        raw_structured_output = state.get("structured_output")
+        raw_structured_output = state.get("structured_response") or state.get("structured_output")
 
         # Extract text from last AI message
         result_text = ""

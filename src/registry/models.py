@@ -27,7 +27,7 @@ class ProgramConfig(BaseModel):
     )
 
     # Agent configuration
-    system_prompt: dict[str, Any] = Field(
+    system_prompt: dict[str, Any] | str = Field(
         description="System prompt configuration for ClaudeAgentOptions"
     )
     allowed_tools: list[str] = Field(

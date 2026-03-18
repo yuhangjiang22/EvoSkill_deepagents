@@ -10,6 +10,33 @@ from src.agent_profiles.base import Agent, AgentTrace
 from src.cache import RunCache, CacheConfig
 
 
+import re
+
+
+def _write_skill_to_disk(generated_skill: str, project_root: Path) -> None:
+    """Write a generated SKILL.md to .claude/skills/<name>/SKILL.md.
+
+    Parses the skill name from YAML frontmatter (name: field).
+    Falls back to a slugified first heading or 'generated-skill'.
+    """
+    # Try to extract name from frontmatter
+    name_match = re.search(r"^---\s*\n.*?^name:\s*([^\n]+)", generated_skill, re.M | re.S)
+    if name_match:
+        skill_name = name_match.group(1).strip().strip('"').strip("'")
+    else:
+        # Fall back to first markdown heading
+        heading_match = re.search(r"^#+ (.+)", generated_skill, re.M)
+        if heading_match:
+            skill_name = re.sub(r"[^a-z0-9]+", "-", heading_match.group(1).lower()).strip("-")
+        else:
+            skill_name = "generated-skill"
+
+    skill_path = project_root / ".claude" / "skills" / skill_name / "SKILL.md"
+    skill_path.parent.mkdir(parents=True, exist_ok=True)
+    skill_path.write_text(generated_skill)
+    _log("", f"  -> Skill written: .claude/skills/{skill_name}/SKILL.md")
+
+
 def _log(phase: str, message: str = "", indent: int = 0) -> None:
     """Print a structured log message.
 
@@ -504,7 +531,12 @@ and modify it to add these capabilities. Preserve all existing content that is s
 
             skill_trace = await self.agents.skill_generator.run(skill_query)
             if skill_trace.output:
-                pass  # Skill is written to file by the generator
+                # Write skill to disk — LLM returns generated_skill content but
+                # doesn't reliably call write_file itself, so we do it here.
+                _write_skill_to_disk(
+                    skill_trace.output.generated_skill,
+                    self._project_root,
+                )
 
         else:  # prompt_only
             proposer_trace = await self.agents.prompt_proposer.run(proposer_query)

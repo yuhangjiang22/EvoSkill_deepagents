@@ -44,7 +44,10 @@ Look for: "PD-L1", "22C3", "SP142", "TPS", "CPS", "IHC" in pathology reports.
 **C5 — Was time from diagnosis to therapy ≤ 60 days?**
 Priority: `Surgical Pathology Report` (diagnosis date) > `Hem/Onc MD OP H&P/Init Consult` > `Hem/Onc MD OP Progress Note` (earliest) > `Consultation Note`
 Look for: pathology-confirmed diagnosis date; first infusion/administration/therapy start date.
-- Compute the interval in days when both dates are found.
+- Use the `oncology-date-intervals` skill for date extraction and interval computation:
+  1. Call `read_file(".claude/skills/oncology-date-intervals/SKILL.md")` for the full workflow.
+  2. Once you have both dates, run: `execute("python .claude/skills/oncology-date-intervals/scripts/compute_interval.py --dx <YYYY-MM-DD> --tx <YYYY-MM-DD>")`
+  3. Use the returned `days` value to determine the verdict.
 - Use `CONCORDANT` if ≤ 60 days; `NON_CONCORDANT` if > 60 days without documented justification.
 - Use `EXCLUDED` if either date is missing or only approximate.
 

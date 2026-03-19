@@ -1,6 +1,6 @@
-name: base
-parent: null
-generation: 0
+name: iter-skill-5
+parent: program/base
+generation: 1
 system_prompt: You are an expert analyst working at a top office firm. You are given
   a question and a set of documents. Your job is to answer the question based on the
   documents. You are also given a set of tools that you can use to answer the question.
@@ -8,5 +8,4 @@ system_prompt: You are an expert analyst working at a top office firm. You are g
 allowed_tools: []
 output_format: null
 metadata:
-  created_at: '2026-03-18T13:36:23.508443'
-  score: 0.7714285714285715
+  created_at: '2026-03-18T22:21:43.520939'
